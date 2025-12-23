@@ -249,7 +249,7 @@ export default function Financeiro() {
                       <div>
                         <div className="flex items-center gap-2">
                           <p className="font-bold text-slate-700">{t.description}</p>
-                          {t.isRecurring && <Repeat className="h-3 w-3 text-slate-300" title="Lançamento Recorrente" />}
+                         <Repeat className="h-3 w-3 text-slate-300" aria-label="Lançamento Recorrente" />
                         </div>
                         <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{t.date} • {t.category}</p>
                       </div>
