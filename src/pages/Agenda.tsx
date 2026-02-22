@@ -21,14 +21,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { 
-  Plus, 
-  CheckCircle2, 
-  CircleDashed, 
-  UserX, 
-  RefreshCcw,
-  MoreVertical,
-  Trash2,
-  CalendarDays
+  Plus, CheckCircle2, CircleDashed, UserX, RefreshCcw, MoreVertical, Trash2, CalendarDays, Loader2
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -37,86 +30,145 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 
+// Interfaces
 interface Appointment {
   id: number;
-  patient: string;
+  paciente_id: number;
+  patient_name: string; // Nome vindo do JOIN
   date: string;
   time: string;
   procedure: string;
   status: "confirmed" | "pending" | "absent" | "rescheduled";
+  valor?: number;
+}
+
+interface PatientSimple {
+  id: number;
+  nome: string;
 }
 
 export default function Agenda() {
   const [appointments, setAppointments] = useState<Appointment[]>([]);
+  const [patientsList, setPatientsList] = useState<PatientSimple[]>([]); // Lista para o Select
+  
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isRescheduleModalOpen, setIsRescheduleModalOpen] = useState(false);
   const [isDeleteAlertOpen, setIsDeleteAlertOpen] = useState(false);
   const [selectedApp, setSelectedApp] = useState<Appointment | null>(null);
-  
+  const [loading, setLoading] = useState(false);
+
   const [formData, setFormData] = useState({
-    patient: "",
+    patientId: "",
     date: new Date().toISOString().split('T')[0],
     time: "",
-    procedure: ""
+    procedure: "",
+    valor: ""
   });
 
+  // --- FUNÇÕES DE API ---
+
+  const loadAppointments = async () => {
+    try {
+      setLoading(true);
+      const res = await fetch('http://localhost:3000/api/agendamentos');
+      if (res.ok) {
+        const data = await res.json();
+        const formatted = data.map((item: any) => ({
+          id: item.id,
+          paciente_id: item.paciente_id,
+          patient_name: item.paciente_nome || "Paciente Removido",
+          date: item.data_agendamento.split('T')[0],
+          time: item.horario_agendamento.slice(0, 5),
+          procedure: item.procedimento,
+          status: item.status,
+          valor: item.valor
+        }));
+        setAppointments(formatted);
+      }
+    } catch (error) {
+      console.error("Erro ao carregar agenda", error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const loadPatientsList = async () => {
+    try {
+      const res = await fetch('http://localhost:3000/api/pacientes');
+      if (res.ok) {
+        const data = await res.json();
+        setPatientsList(data);
+      }
+    } catch (error) {
+      console.error("Erro ao carregar lista de pacientes", error);
+    }
+  };
+
   useEffect(() => {
-    const saved = localStorage.getItem("@odonto:appointments");
-    if (saved) setAppointments(JSON.parse(saved));
+    loadAppointments();
+    loadPatientsList();
   }, []);
 
-  const saveAndRefresh = (list: Appointment[]) => {
-    setAppointments(list);
-    localStorage.setItem("@odonto:appointments", JSON.stringify(list));
+  const handleSave = async () => {
+    if (!formData.patientId || !formData.date || !formData.time) return;
+
+    try {
+      setLoading(true);
+      await fetch('http://localhost:3000/api/agendamentos', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          paciente_id: parseInt(formData.patientId),
+          data: formData.date,
+          horario: formData.time,
+          procedimento: formData.procedure,
+          valor: parseFloat(formData.valor) || 0
+        })
+      });
+      await loadAppointments();
+      closeMainModal();
+    } catch (error) {
+      alert("Erro ao agendar");
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const handleSave = () => {
-    if (!formData.patient || !formData.date || !formData.time) return;
-    const newAppointment: Appointment = { id: Date.now(), ...formData, status: "pending" };
-    const updated = [...appointments, newAppointment].sort((a, b) => 
-      `${a.date} ${a.time}`.localeCompare(`${b.date} ${b.time}`)
-    );
-    saveAndRefresh(updated);
-    closeMainModal();
-  };
-
-  const handleReschedule = () => {
+  const handleDelete = async () => {
     if (!selectedApp) return;
-    const updated = appointments.map(app => 
-      app.id === selectedApp.id ? { ...app, date: formData.date, time: formData.time, status: "rescheduled" as const } : app
-    ).sort((a, b) => `${a.date} ${a.time}`.localeCompare(`${b.date} ${b.time}`));
-    saveAndRefresh(updated);
-    setIsRescheduleModalOpen(false);
-    setSelectedApp(null);
+    try {
+      await fetch(`http://localhost:3000/api/agendamentos/${selectedApp.id}`, { method: 'DELETE' });
+      await loadAppointments();
+      setIsDeleteAlertOpen(false);
+      setSelectedApp(null);
+    } catch (error) {
+      alert("Erro ao excluir");
+    }
   };
 
-  const handleDelete = () => {
-    if (!selectedApp) return;
-    const updated = appointments.filter(app => app.id !== selectedApp.id);
-    saveAndRefresh(updated);
-    setIsDeleteAlertOpen(false);
-    setSelectedApp(null);
+  const updateStatus = async (id: number, newStatus: string) => {
+    try {
+        await fetch(`http://localhost:3000/api/agendamentos/${id}/status`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ status: newStatus })
+        });
+        loadAppointments();
+    } catch (error) {
+        alert("Erro ao atualizar status");
+    }
   };
 
-  const updateStatus = (id: number, newStatus: Appointment['status']) => {
-    const updated = appointments.map(app => app.id === id ? { ...app, status: newStatus } : app);
-    saveAndRefresh(updated);
-  };
+  // --- UI HELPERS ---
 
-  const openReschedule = (app: Appointment) => {
-    setSelectedApp(app);
-    setFormData({ patient: app.patient, date: app.date, time: app.time, procedure: app.procedure });
-    setIsRescheduleModalOpen(true);
+  const closeMainModal = () => {
+    setIsModalOpen(false);
+    setFormData({ patientId: "", date: new Date().toISOString().split('T')[0], time: "", procedure: "", valor: "" });
   };
 
   const openDeleteAlert = (app: Appointment) => {
     setSelectedApp(app);
     setIsDeleteAlertOpen(true);
-  };
-
-  const closeMainModal = () => {
-    setIsModalOpen(false);
-    setFormData({ patient: "", date: new Date().toISOString().split('T')[0], time: "", procedure: "" });
   };
 
   const getStatusConfig = (status: Appointment['status']) => {
@@ -132,7 +184,9 @@ export default function Agenda() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold text-slate-800 tracking-tight">Agenda Clínica</h1>
+          <h1 className="text-3xl font-bold text-slate-800 tracking-tight flex items-center gap-2">
+            Agenda Clínica {loading && <Loader2 className="h-5 w-5 animate-spin text-primary"/>}
+          </h1>
           <p className="text-muted-foreground font-medium">Gestão de horários e compromissos</p>
         </div>
         <Button onClick={() => setIsModalOpen(true)} className="gap-2 shadow-md">
@@ -144,7 +198,7 @@ export default function Agenda() {
         {appointments.length === 0 ? (
           <Card className="border-dashed border-2 bg-slate-50/50 p-10 text-center">
             <CalendarDays className="h-10 w-10 text-slate-300 mx-auto mb-2" />
-            <p className="text-slate-400 font-medium">Nenhum agendamento para mostrar.</p>
+            <p className="text-slate-400 font-medium">{loading ? "Carregando agenda..." : "Nenhum agendamento para mostrar."}</p>
           </Card>
         ) : (
           appointments.map(app => {
@@ -157,25 +211,33 @@ export default function Agenda() {
                     <div className="flex items-center gap-6">
                       <div className="flex flex-col items-center justify-center bg-slate-50 px-3 py-2 rounded-lg border border-slate-100 min-w-[110px]">
                         <span className="text-[10px] font-bold text-slate-400 uppercase tracking-tight">
-                            {new Date(app.date + 'T00:00:00').toLocaleDateString('pt-BR')}
+                            {new Date(app.date + 'T12:00:00').toLocaleDateString('pt-BR')}
                         </span>
                         <span className="text-lg font-black text-slate-700 leading-none mt-1">{app.time}</span>
                       </div>
                       <div>
-                        <p className="font-bold text-slate-800 text-lg group-hover:text-primary transition-colors">{app.patient}</p>
+                        <p className="font-bold text-slate-800 text-lg group-hover:text-primary transition-colors">{app.patient_name}</p>
                         <span className="text-[10px] bg-slate-100 px-2 py-0.5 rounded font-bold text-slate-500 uppercase tracking-wider">{app.procedure}</span>
                       </div>
                     </div>
                     
                     <div className="flex items-center gap-3">
                       <div className={`flex items-center gap-2 px-4 py-1.5 rounded-full text-xs font-bold border ${config.style}`}>{config.icon} {config.text}</div>
+                      
                       <DropdownMenu>
-                        <DropdownMenuTrigger asChild><Button variant="ghost" size="icon" className="h-8 w-8 text-slate-400"><MoreVertical className="h-4 w-4" /></Button></DropdownMenuTrigger>
+                        <DropdownMenuTrigger asChild>
+                            <Button variant="ghost" size="icon" className="h-8 w-8 text-slate-400"><MoreVertical className="h-4 w-4" /></Button>
+                        </DropdownMenuTrigger>
                         <DropdownMenuContent align="end" className="w-56">
-                          <DropdownMenuItem onClick={() => updateStatus(app.id, 'confirmed')} className="text-emerald-600 cursor-pointer font-medium"><CheckCircle2 className="mr-2 h-4 w-4" /> Marcar Atendimento</DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => openReschedule(app)} className="text-blue-600 cursor-pointer font-bold"><RefreshCcw className="mr-2 h-4 w-4" /> Remarcar / Alterar</DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => updateStatus(app.id, 'absent')} className="text-rose-600 cursor-pointer font-medium"><UserX className="mr-2 h-4 w-4" /> Registrar Falta</DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => openDeleteAlert(app)} className="text-rose-600 cursor-pointer border-t mt-1 font-bold"><Trash2 className="mr-2 h-4 w-4" /> Excluir Horário</DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => updateStatus(app.id, 'confirmed')} className="text-emerald-600 cursor-pointer font-medium">
+                            <CheckCircle2 className="mr-2 h-4 w-4" /> Marcar Atendimento
+                          </DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => updateStatus(app.id, 'absent')} className="text-rose-600 cursor-pointer font-medium">
+                            <UserX className="mr-2 h-4 w-4" /> Registrar Falta
+                          </DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => openDeleteAlert(app)} className="text-rose-600 cursor-pointer border-t mt-1 font-bold">
+                            <Trash2 className="mr-2 h-4 w-4" /> Excluir Horário
+                          </DropdownMenuItem>
                         </DropdownMenuContent>
                       </DropdownMenu>
                     </div>
@@ -192,10 +254,21 @@ export default function Agenda() {
         <DialogContent className="sm:max-w-[425px]">
           <DialogHeader><DialogTitle className="text-xl font-bold">Novo Agendamento</DialogTitle></DialogHeader>
           <div className="grid gap-4 py-4">
+            
             <div className="grid gap-2">
-              <Label>Nome do Paciente</Label>
-              <Input placeholder="Nome completo" value={formData.patient} onChange={e => setFormData({...formData, patient: e.target.value})} />
+              <Label>Paciente</Label>
+              <select 
+                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                value={formData.patientId}
+                onChange={e => setFormData({...formData, patientId: e.target.value})}
+              >
+                <option value="">Selecione um paciente...</option>
+                {patientsList.map(p => (
+                    <option key={p.id} value={p.id}>{p.nome}</option>
+                ))}
+              </select>
             </div>
+
             <div className="grid grid-cols-2 gap-4">
               <div className="grid gap-2">
                 <Label>Data</Label>
@@ -206,41 +279,22 @@ export default function Agenda() {
                 <Input type="time" value={formData.time} onChange={e => setFormData({...formData, time: e.target.value})} />
               </div>
             </div>
+
             <div className="grid gap-2">
               <Label>Procedimento</Label>
-              <Input placeholder="Ex: Canal, Extração..." value={formData.procedure} onChange={e => setFormData({...formData, procedure: e.target.value})} />
+              <Input placeholder="Ex: Avaliação, Limpeza..." value={formData.procedure} onChange={e => setFormData({...formData, procedure: e.target.value})} />
             </div>
-          </div>
-          <DialogFooter><Button onClick={handleSave} className="w-full bg-primary hover:bg-primary/90">Agendar Paciente</Button></DialogFooter>
-        </DialogContent>
-      </Dialog>
 
-      {/* MODAL DE REMARCAÇÃO */}
-      <Dialog open={isRescheduleModalOpen} onOpenChange={setIsRescheduleModalOpen}>
-        <DialogContent className="sm:max-w-[425px] border-blue-100 shadow-2xl">
-          <DialogHeader className="flex flex-row items-center gap-3 space-y-0 text-blue-600">
-            <RefreshCcw className="h-6 w-6" />
-            <DialogTitle className="text-xl font-bold">Remarcar Paciente</DialogTitle>
-          </DialogHeader>
-          <div className="py-4 space-y-4">
-            <div className="bg-blue-50/50 p-4 rounded-xl border border-blue-100">
-              <p className="text-[10px] text-blue-400 font-black uppercase tracking-widest">Paciente</p>
-              <p className="text-lg font-bold text-slate-700">{selectedApp?.patient}</p>
+             <div className="grid gap-2">
+              <Label>Valor Estimado (R$)</Label>
+              <Input type="number" placeholder="0,00" value={formData.valor} onChange={e => setFormData({...formData, valor: e.target.value})} />
             </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="grid gap-2">
-                <Label className="font-bold">Nova Data</Label>
-                <Input type="date" value={formData.date} onChange={e => setFormData({...formData, date: e.target.value})} />
-              </div>
-              <div className="grid gap-2">
-                <Label className="font-bold">Novo Horário</Label>
-                <Input type="time" value={formData.time} onChange={e => setFormData({...formData, time: e.target.value})} />
-              </div>
-            </div>
+
           </div>
           <DialogFooter>
-            <Button variant="ghost" onClick={() => setIsRescheduleModalOpen(false)}>Cancelar</Button>
-            <Button onClick={handleReschedule} className="bg-blue-600 hover:bg-blue-700">Confirmar Alteração</Button>
+            <Button onClick={handleSave} className="w-full bg-primary hover:bg-primary/90" disabled={loading}>
+                {loading ? "Salvando..." : "Agendar Paciente"}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -254,7 +308,7 @@ export default function Agenda() {
               <AlertDialogTitle className="text-xl font-bold text-slate-800">Apagar Agendamento?</AlertDialogTitle>
             </div>
             <AlertDialogDescription className="text-slate-600 text-base">
-              Tem certeza que deseja remover o horário de <strong>{selectedApp?.patient}</strong>? Esta ação não pode ser desfeita.
+              Tem certeza que deseja remover o horário de <strong>{selectedApp?.patient_name}</strong>?
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter className="mt-4 gap-2">
