@@ -74,7 +74,7 @@ export default function Pacientes() {
   const loadPatients = async () => {
     try {
       setLoading(true);
-      const res = await fetch('http://localhost:3000/api/pacientes');
+      const res = await fetch('/api/pacientes');
       if (res.ok) {
         const data = await res.json();
         
@@ -121,8 +121,8 @@ export default function Pacientes() {
     // Decide se é POST (criar) ou PUT (editar)
     const method = editingId ? 'PUT' : 'POST';
     const url = editingId 
-        ? `http://localhost:3000/api/pacientes/${editingId}`
-        : 'http://localhost:3000/api/pacientes';
+        ? `/api/pacientes/${editingId}`
+        : '/api/pacientes';
 
     try {
         setLoading(true);
@@ -154,7 +154,7 @@ export default function Pacientes() {
   const handleConfirmDelete = async () => {
     if (idToDelete) {
       try {
-          await fetch(`http://localhost:3000/api/pacientes/${idToDelete}`, {
+          await fetch(`/api/pacientes/${idToDelete}`, {
               method: 'DELETE'
           });
           await loadPatients(); // Atualiza a lista removendo o item

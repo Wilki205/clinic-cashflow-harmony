@@ -26,7 +26,7 @@ export default function RegistroPublico() {
 
     try {
       // Envia os dados para o seu servidor Node.js
-      const response = await fetch('http://localhost:3000/api/pacientes', {
+      const response = await fetch('/api/pacientes', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

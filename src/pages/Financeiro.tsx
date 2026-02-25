@@ -58,7 +58,7 @@ export default function Financeiro() {
   const loadTransactions = async () => {
     try {
       setLoading(true);
-      const res = await fetch('http://localhost:3000/api/financeiro');
+      const res = await fetch('/api/financeiro');
       if (res.ok) {
         const data = await res.json();
         const formatted = data.map((t: any) => ({
@@ -100,7 +100,7 @@ export default function Financeiro() {
             : formData.description;
 
         promises.push(
-            fetch('http://localhost:3000/api/financeiro', {
+            fetch('/api/financeiro', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -127,7 +127,7 @@ export default function Financeiro() {
   const handleDelete = async () => {
     if (idToDelete) {
       try {
-        await fetch(`http://localhost:3000/api/financeiro/${idToDelete}`, { method: 'DELETE' });
+        await fetch(`/api/financeiro/${idToDelete}`, { method: 'DELETE' });
         await loadTransactions();
         setIsDeleteAlertOpen(false);
         setIdToDelete(null);

@@ -42,7 +42,7 @@ export default function Dashboard() {
       setLoading(true);
       
       // 1. Busca Estatísticas (Com Proteção)
-      const resStats = await fetch('http://localhost:3000/api/dashboard-stats');
+      const resStats = await fetch('/api/dashboard-stats');
       if (resStats.ok) {
         const data = await resStats.json();
         // Garante que os números são números (evita crash)
@@ -60,7 +60,7 @@ export default function Dashboard() {
       }
 
       // 2. Busca Agenda (Com Proteção)
-      const resAgenda = await fetch('http://localhost:3000/api/agendamentos/hoje');
+      const resAgenda = await fetch('/api/agendamentos/hoje');
       if (resAgenda.ok) {
         const data = await resAgenda.json();
         if (Array.isArray(data)) {
@@ -86,7 +86,7 @@ export default function Dashboard() {
 
   const handleQuickCheckin = async (id: number) => {
     try {
-        await fetch(`http://localhost:3000/api/agendamentos/${id}/confirmar`, { method: 'PATCH' });
+        await fetch(`/api/agendamentos/${id}/confirmar`, { method: 'PATCH' });
         fetchData(); 
     } catch (error) {
         console.error("Erro checkin", error);

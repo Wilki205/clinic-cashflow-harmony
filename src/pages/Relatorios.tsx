@@ -26,8 +26,8 @@ export default function Relatorios() {
       
       // Busca dados sincronizados do seu servidor no Parrot OS
       const [finRes, appoRes] = await Promise.all([
-        fetch('http://localhost:3000/api/financeiro'),
-        fetch('http://localhost:3000/api/agendamentos')
+        fetch('/api/financeiro'),
+        fetch('/api/agendamentos')
       ]);
 
       // CORREÇÃO DO ERRO 2339: Aguardando o processamento do JSON antes do filter

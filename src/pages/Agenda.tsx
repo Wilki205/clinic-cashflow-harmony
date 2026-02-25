@@ -70,7 +70,7 @@ export default function Agenda() {
   const loadAppointments = async () => {
     try {
       setLoading(true);
-      const res = await fetch('http://localhost:3000/api/agendamentos');
+      const res = await fetch('/api/agendamentos');
       if (res.ok) {
         const data = await res.json();
         const formatted = data.map((item: any) => ({
@@ -94,7 +94,7 @@ export default function Agenda() {
 
   const loadPatientsList = async () => {
     try {
-      const res = await fetch('http://localhost:3000/api/pacientes');
+      const res = await fetch('/api/pacientes');
       if (res.ok) {
         const data = await res.json();
         setPatientsList(data);
@@ -114,7 +114,7 @@ export default function Agenda() {
 
     try {
       setLoading(true);
-      await fetch('http://localhost:3000/api/agendamentos', {
+      await fetch('/api/agendamentos', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -137,7 +137,7 @@ export default function Agenda() {
   const handleDelete = async () => {
     if (!selectedApp) return;
     try {
-      await fetch(`http://localhost:3000/api/agendamentos/${selectedApp.id}`, { method: 'DELETE' });
+      await fetch(`/api/agendamentos/${selectedApp.id}`, { method: 'DELETE' });
       await loadAppointments();
       setIsDeleteAlertOpen(false);
       setSelectedApp(null);
@@ -148,7 +148,7 @@ export default function Agenda() {
 
   const updateStatus = async (id: number, newStatus: string) => {
     try {
-        await fetch(`http://localhost:3000/api/agendamentos/${id}/status`, {
+        await fetch(`/api/agendamentos/${id}/status`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ status: newStatus })
