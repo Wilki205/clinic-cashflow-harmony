@@ -28,16 +28,13 @@ function requireEnv(name) {
 /** ====== Config ====== */
 const NODE_ENV = process.env.NODE_ENV || "development";
 const PORT = Number(process.env.PORT || 3000);
-
-// Para DEV: se quiser travar o CORS, coloque FRONT_ORIGIN no .env.local
-// Ex: FRONT_ORIGIN=http://localhost:8081
 const FRONT_ORIGIN = process.env.FRONT_ORIGIN;
 
 /** ====== Middlewares ====== */
 if (NODE_ENV === "development") {
   app.use(
     cors({
-      origin: FRONT_ORIGIN || true, // true = libera geral em dev
+      origin: FRONT_ORIGIN || true,
       credentials: true,
     })
   );
@@ -157,12 +154,16 @@ app.post("/api/pacientes", async (req, res) => {
   const status = attachments?.length ? "ok" : "pendente";
 
   try {
-    await pool.query(
-      "INSERT INTO pacientes (nome, email, telefone, cpf, status_doc) VALUES ($1, $2, $3, $4, $5)",
+    const result = await pool.query(
+      "INSERT INTO pacientes (nome, email, telefone, cpf, status_doc) VALUES ($1, $2, $3, $4, $5) RETURNING id",
       [name, email, phone, cpf, status]
     );
-    res.sendStatus(201);
+    res.status(201).json({ id: result.rows[0].id });
   } catch (err) {
+    // melhora a mensagem em caso de CPF duplicado
+    if (err?.code === "23505") {
+      return res.status(409).json({ error: "CPF já cadastrado" });
+    }
     console.error("Erro POST /api/pacientes:", err);
     res.status(500).json({ error: "Erro interno" });
   }
@@ -173,12 +174,20 @@ app.put("/api/pacientes/:id", async (req, res) => {
   const status = attachments?.length ? "ok" : "pendente";
 
   try {
-    await pool.query(
-      "UPDATE pacientes SET nome=$1, email=$2, telefone=$3, cpf=$4, status_doc=$5 WHERE id=$6",
+    const result = await pool.query(
+      "UPDATE pacientes SET nome=$1, email=$2, telefone=$3, cpf=$4, status_doc=$5 WHERE id=$6 RETURNING id",
       [name, email, phone, cpf, status, req.params.id]
     );
-    res.sendStatus(200);
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: "Paciente não encontrado" });
+    }
+
+    res.status(200).json({ id: result.rows[0].id });
   } catch (err) {
+    if (err?.code === "23505") {
+      return res.status(409).json({ error: "CPF já cadastrado" });
+    }
     console.error("Erro PUT /api/pacientes/:id:", err);
     res.status(500).json({ error: "Erro interno" });
   }
@@ -190,6 +199,132 @@ app.delete("/api/pacientes/:id", async (req, res) => {
     res.sendStatus(200);
   } catch (err) {
     console.error("Erro DELETE /api/pacientes/:id:", err);
+    res.status(500).json({ error: "Erro interno" });
+  }
+});
+
+// ==========================================
+// 🩺 ROTA EXTRA: ANAMNESE (por paciente)
+// ==========================================
+
+// helper: garante tri-state boolean (true/false/null)
+function normalizeTriBool(v) {
+  if (v === true || v === "true" || v === 1 || v === "1") return true;
+  if (v === false || v === "false" || v === 0 || v === "0") return false;
+  return null;
+}
+
+app.get("/api/pacientes/:id/anamnese", async (req, res) => {
+  try {
+    const result = await pool.query(
+      `
+      SELECT 
+        allergies, medications, diseases, notes, updated_at,
+        hipertensao, diabetes, problemas_cardiacos, sangramento_facil,
+        gestante, fumante, consome_alcool, alergia_anestesia, alergia_latex
+      FROM anamnese
+      WHERE paciente_id = $1
+      `,
+      [req.params.id]
+    );
+
+    if (result.rowCount === 0) {
+      return res.json({
+        allergies: "",
+        medications: "",
+        diseases: "",
+        notes: "",
+        updated_at: null,
+
+        hipertensao: null,
+        diabetes: null,
+        problemas_cardiacos: null,
+        sangramento_facil: null,
+        gestante: null,
+        fumante: null,
+        consome_alcool: null,
+        alergia_anestesia: null,
+        alergia_latex: null,
+      });
+    }
+
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error("Erro GET /api/pacientes/:id/anamnese:", err);
+    res.status(500).json({ error: "Erro interno" });
+  }
+});
+
+app.put("/api/pacientes/:id/anamnese", async (req, res) => {
+  const {
+    allergies = "",
+    medications = "",
+    diseases = "",
+    notes = "",
+
+    hipertensao,
+    diabetes,
+    problemas_cardiacos,
+    sangramento_facil,
+    gestante,
+    fumante,
+    consome_alcool,
+    alergia_anestesia,
+    alergia_latex,
+  } = req.body;
+
+  try {
+    await pool.query(
+      `
+      INSERT INTO anamnese (
+        paciente_id, allergies, medications, diseases, notes, updated_at,
+        hipertensao, diabetes, problemas_cardiacos, sangramento_facil,
+        gestante, fumante, consome_alcool, alergia_anestesia, alergia_latex
+      )
+      VALUES (
+        $1, $2, $3, $4, $5, NOW(),
+        $6, $7, $8, $9,
+        $10, $11, $12, $13, $14
+      )
+      ON CONFLICT (paciente_id)
+      DO UPDATE SET
+        allergies = EXCLUDED.allergies,
+        medications = EXCLUDED.medications,
+        diseases = EXCLUDED.diseases,
+        notes = EXCLUDED.notes,
+        hipertensao = EXCLUDED.hipertensao,
+        diabetes = EXCLUDED.diabetes,
+        problemas_cardiacos = EXCLUDED.problemas_cardiacos,
+        sangramento_facil = EXCLUDED.sangramento_facil,
+        gestante = EXCLUDED.gestante,
+        fumante = EXCLUDED.fumante,
+        consome_alcool = EXCLUDED.consome_alcool,
+        alergia_anestesia = EXCLUDED.alergia_anestesia,
+        alergia_latex = EXCLUDED.alergia_latex,
+        updated_at = NOW()
+      `,
+      [
+        req.params.id,
+        allergies,
+        medications,
+        diseases,
+        notes,
+
+        normalizeTriBool(hipertensao),
+        normalizeTriBool(diabetes),
+        normalizeTriBool(problemas_cardiacos),
+        normalizeTriBool(sangramento_facil),
+        normalizeTriBool(gestante),
+        normalizeTriBool(fumante),
+        normalizeTriBool(consome_alcool),
+        normalizeTriBool(alergia_anestesia),
+        normalizeTriBool(alergia_latex),
+      ]
+    );
+
+    res.sendStatus(200);
+  } catch (err) {
+    console.error("Erro PUT /api/pacientes/:id/anamnese:", err);
     res.status(500).json({ error: "Erro interno" });
   }
 });
@@ -252,7 +387,6 @@ app.delete("/api/agendamentos/:id", async (req, res) => {
   }
 });
 
-// Check-in rápido (mantido para compatibilidade)
 app.patch("/api/agendamentos/:id/confirmar", async (req, res) => {
   try {
     await pool.query("UPDATE agendamentos SET status = 'confirmed' WHERE id = $1", [
@@ -305,15 +439,16 @@ app.delete("/api/financeiro/:id", async (req, res) => {
 
 /** ====== Servir o Front (produção) ====== */
 if (NODE_ENV === "production") {
-  app.use(express.static(path.join(__dirname, "dist")));
+  const distPath = path.join(__dirname, "dist");
+  app.use(express.static(distPath));
 
-  // SPA fallback (React Router)
-  app.get("*", (req, res) => {
-    res.sendFile(path.join(__dirname, "dist", "index.html"));
+  app.use((req, res, next) => {
+    if (req.path.startsWith("/api")) return next();
+    res.sendFile(path.join(distPath, "index.html"));
   });
 }
 
 /** ====== Start ====== */
-app.listen(PORT, () => {
+app.listen(PORT, "0.0.0.0", () => {
   console.log(`🚀 API + Front rodando em http://0.0.0.0:${PORT} (${NODE_ENV})`);
 });
