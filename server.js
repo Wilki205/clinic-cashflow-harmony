@@ -34,6 +34,7 @@ const FRONT_ORIGIN = process.env.FRONT_ORIGIN;
 
 // ✅ Clínica fixa atual (monoclínica por enquanto)
 const DEFAULT_CLINIC_ID = "a7813766-8e38-4458-bd99-06af5cba2c46";
+const {randomUUID} = await import("crypto");
 
 /** ====== AUTH CONFIG (ADICIONADO) ====== */
 const JWT_SECRET = requireEnv("JWT_SECRET");
@@ -94,11 +95,28 @@ app.post("/api/auth/google", async (req, res) => {
     if (!payload?.email) {
       return res.status(401).json({ error: "Token Google inválido" });
     }
+    // Verificar se o usuário existe na clínica (pode ser criado automaticamente ou ter um cadastro prévio)
+    let user = await pool.query(
+      "SELECT id, clinic_id FROM users WHERE email = $1",
+      [payload.email]
+    );
 
+    if (user.rowCount === 0) {
+      // Criar usuário automaticamente (opcional)
+      const clinicId = randomUUID(); // Gerar um clinic_id único para o usuário (ou usar um fixo se for monoclínica)
+      user = await pool.query(
+        "INSERT INTO users (email, name, clinic_id, role) VALUES ($1, $2, $3,'admin') RETURNING id, clinic_id",
+        [payload.email, payload.name || "Usuário Google", clinicId]
+      );
+      user = user.rows[0];
+    } else {
+      user = user.rows[0];
+    } 
     const token = jwt.sign(
       {
         email: payload.email,
         name: payload.name,
+        clinic_id: user.clinic_id
       },
       JWT_SECRET,
       { expiresIn: "24h" }
