@@ -30,6 +30,9 @@ const NODE_ENV = process.env.NODE_ENV || "development";
 const PORT = Number(process.env.PORT || 3000);
 const FRONT_ORIGIN = process.env.FRONT_ORIGIN;
 
+// ✅ Clínica fixa atual (monoclínica por enquanto)
+const DEFAULT_CLINIC_ID = "a7813766-8e38-4458-bd99-06af5cba2c46";
+
 /** ====== Middlewares ====== */
 if (NODE_ENV === "development") {
   app.use(
@@ -70,28 +73,40 @@ app.get("/api/health", async (req, res) => {
 // ==========================================
 app.get("/api/dashboard-stats", async (req, res) => {
   try {
-    const financeiroQuery = pool.query(`
+    const financeiroQuery = pool.query(
+      `
       SELECT 
-        COALESCE(SUM(CASE WHEN tipo = 'receita' THEN valor ELSE 0 END), 0) as income,
-        COALESCE(SUM(CASE WHEN tipo = 'despesa' THEN valor ELSE 0 END), 0) as expense
+        COALESCE(SUM(CASE WHEN tipo = 'receita' THEN valor ELSE 0 END), 0) AS income,
+        COALESCE(SUM(CASE WHEN tipo = 'despesa' THEN valor ELSE 0 END), 0) AS expense
       FROM financeiro
-    `);
+      WHERE clinic_id = $1
+      `,
+      [DEFAULT_CLINIC_ID]
+    );
 
-    const pacientesQuery = pool.query(`
+    const pacientesQuery = pool.query(
+      `
       SELECT 
-        COUNT(*) as total, 
-        COUNT(*) FILTER (WHERE status_doc = 'pendente') as pendentes 
+        COUNT(*) AS total, 
+        COUNT(*) FILTER (WHERE status_doc = 'pendente') AS pendentes 
       FROM pacientes
-    `);
+      WHERE clinic_id = $1
+      `,
+      [DEFAULT_CLINIC_ID]
+    );
 
-    const agendamentosQuery = pool.query(`
+    const agendamentosQuery = pool.query(
+      `
       SELECT 
-        COUNT(*) as total,
-        COUNT(*) FILTER (WHERE status = 'absent') as faltas,
-        COUNT(*) FILTER (WHERE status = 'confirmed') as confirmados_geral,
-        COUNT(*) FILTER (WHERE data_agendamento = CURRENT_DATE AND status = 'confirmed') as confirmados_hoje
+        COUNT(*) AS total,
+        COUNT(*) FILTER (WHERE status = 'absent') AS faltas,
+        COUNT(*) FILTER (WHERE status = 'confirmed') AS confirmados_geral,
+        COUNT(*) FILTER (WHERE data_agendamento = CURRENT_DATE AND status = 'confirmed') AS confirmados_hoje
       FROM agendamentos
-    `);
+      WHERE clinic_id = $1
+      `,
+      [DEFAULT_CLINIC_ID]
+    );
 
     const [fin, pac, age] = await Promise.all([
       financeiroQuery,
@@ -122,13 +137,23 @@ app.get("/api/dashboard-stats", async (req, res) => {
 
 app.get("/api/agendamentos/hoje", async (req, res) => {
   try {
-    const result = await pool.query(`
-      SELECT a.id, a.horario_agendamento as time, a.procedimento as procedure, a.status, p.nome as patient
+    const result = await pool.query(
+      `
+      SELECT 
+        a.id,
+        a.horario_agendamento AS time,
+        a.procedimento AS procedure,
+        a.status,
+        p.nome AS patient
       FROM agendamentos a
       JOIN pacientes p ON a.paciente_id = p.id
       WHERE a.data_agendamento = CURRENT_DATE
+        AND a.clinic_id = $1
+        AND p.clinic_id = $1
       ORDER BY a.horario_agendamento ASC
-    `);
+      `,
+      [DEFAULT_CLINIC_ID]
+    );
     res.json(result.rows);
   } catch (err) {
     console.error("Erro agendamentos hoje:", err);
@@ -141,7 +166,10 @@ app.get("/api/agendamentos/hoje", async (req, res) => {
 // ==========================================
 app.get("/api/pacientes", async (req, res) => {
   try {
-    const result = await pool.query("SELECT * FROM pacientes ORDER BY nome ASC");
+    const result = await pool.query(
+      "SELECT * FROM pacientes WHERE clinic_id = $1 ORDER BY nome ASC",
+      [DEFAULT_CLINIC_ID]
+    );
     res.json(result.rows);
   } catch (err) {
     console.error("Erro GET /api/pacientes:", err);
@@ -155,12 +183,15 @@ app.post("/api/pacientes", async (req, res) => {
 
   try {
     const result = await pool.query(
-      "INSERT INTO pacientes (nome, email, telefone, cpf, status_doc) VALUES ($1, $2, $3, $4, $5) RETURNING id",
-      [name, email, phone, cpf, status]
+      `
+      INSERT INTO pacientes (nome, email, telefone, cpf, status_doc, clinic_id)
+      VALUES ($1, $2, $3, $4, $5, $6)
+      RETURNING id
+      `,
+      [name, email, phone, cpf, status, DEFAULT_CLINIC_ID]
     );
     res.status(201).json({ id: result.rows[0].id });
   } catch (err) {
-    // melhora a mensagem em caso de CPF duplicado
     if (err?.code === "23505") {
       return res.status(409).json({ error: "CPF já cadastrado" });
     }
@@ -175,8 +206,13 @@ app.put("/api/pacientes/:id", async (req, res) => {
 
   try {
     const result = await pool.query(
-      "UPDATE pacientes SET nome=$1, email=$2, telefone=$3, cpf=$4, status_doc=$5 WHERE id=$6 RETURNING id",
-      [name, email, phone, cpf, status, req.params.id]
+      `
+      UPDATE pacientes
+      SET nome = $1, email = $2, telefone = $3, cpf = $4, status_doc = $5
+      WHERE id = $6 AND clinic_id = $7
+      RETURNING id
+      `,
+      [name, email, phone, cpf, status, req.params.id, DEFAULT_CLINIC_ID]
     );
 
     if (result.rowCount === 0) {
@@ -195,7 +231,10 @@ app.put("/api/pacientes/:id", async (req, res) => {
 
 app.delete("/api/pacientes/:id", async (req, res) => {
   try {
-    await pool.query("DELETE FROM pacientes WHERE id = $1", [req.params.id]);
+    await pool.query(
+      "DELETE FROM pacientes WHERE id = $1 AND clinic_id = $2",
+      [req.params.id, DEFAULT_CLINIC_ID]
+    );
     res.sendStatus(200);
   } catch (err) {
     console.error("Erro DELETE /api/pacientes/:id:", err);
@@ -207,7 +246,6 @@ app.delete("/api/pacientes/:id", async (req, res) => {
 // 🩺 ROTA EXTRA: ANAMNESE (por paciente)
 // ==========================================
 
-// helper: garante tri-state boolean (true/false/null)
 function normalizeTriBool(v) {
   if (v === true || v === "true" || v === 1 || v === "1") return true;
   if (v === false || v === "false" || v === 0 || v === "0") return false;
@@ -224,8 +262,9 @@ app.get("/api/pacientes/:id/anamnese", async (req, res) => {
         gestante, fumante, consome_alcool, alergia_anestesia, alergia_latex
       FROM anamnese
       WHERE paciente_id = $1
+        AND clinic_id = $2
       `,
-      [req.params.id]
+      [req.params.id, DEFAULT_CLINIC_ID]
     );
 
     if (result.rowCount === 0) {
@@ -235,7 +274,6 @@ app.get("/api/pacientes/:id/anamnese", async (req, res) => {
         diseases: "",
         notes: "",
         updated_at: null,
-
         hipertensao: null,
         diabetes: null,
         problemas_cardiacos: null,
@@ -274,20 +312,32 @@ app.put("/api/pacientes/:id/anamnese", async (req, res) => {
   } = req.body;
 
   try {
+    const patientCheck = await pool.query(
+      "SELECT id FROM pacientes WHERE id = $1 AND clinic_id = $2",
+      [req.params.id, DEFAULT_CLINIC_ID]
+    );
+
+    if (patientCheck.rowCount === 0) {
+      return res.status(404).json({ error: "Paciente não encontrado para esta clínica" });
+    }
+
     await pool.query(
       `
       INSERT INTO anamnese (
-        paciente_id, allergies, medications, diseases, notes, updated_at,
+        paciente_id, clinic_id,
+        allergies, medications, diseases, notes, updated_at,
         hipertensao, diabetes, problemas_cardiacos, sangramento_facil,
         gestante, fumante, consome_alcool, alergia_anestesia, alergia_latex
       )
       VALUES (
-        $1, $2, $3, $4, $5, NOW(),
-        $6, $7, $8, $9,
-        $10, $11, $12, $13, $14
+        $1, $2,
+        $3, $4, $5, $6, NOW(),
+        $7, $8, $9, $10,
+        $11, $12, $13, $14, $15
       )
       ON CONFLICT (paciente_id)
       DO UPDATE SET
+        clinic_id = EXCLUDED.clinic_id,
         allergies = EXCLUDED.allergies,
         medications = EXCLUDED.medications,
         diseases = EXCLUDED.diseases,
@@ -305,11 +355,11 @@ app.put("/api/pacientes/:id/anamnese", async (req, res) => {
       `,
       [
         req.params.id,
+        DEFAULT_CLINIC_ID,
         allergies,
         medications,
         diseases,
         notes,
-
         normalizeTriBool(hipertensao),
         normalizeTriBool(diabetes),
         normalizeTriBool(problemas_cardiacos),
@@ -334,12 +384,16 @@ app.put("/api/pacientes/:id/anamnese", async (req, res) => {
 // ==========================================
 app.get("/api/agendamentos", async (req, res) => {
   try {
-    const result = await pool.query(`
-      SELECT a.*, p.nome as paciente_nome 
+    const result = await pool.query(
+      `
+      SELECT a.*, p.nome AS paciente_nome
       FROM agendamentos a
       LEFT JOIN pacientes p ON a.paciente_id = p.id
+      WHERE a.clinic_id = $1
       ORDER BY a.data_agendamento DESC, a.horario_agendamento ASC
-    `);
+      `,
+      [DEFAULT_CLINIC_ID]
+    );
     res.json(result.rows);
   } catch (err) {
     console.error("Erro GET /api/agendamentos:", err);
@@ -351,9 +405,23 @@ app.post("/api/agendamentos", async (req, res) => {
   const { paciente_id, data, horario, procedimento, valor } = req.body;
 
   try {
+    const patientCheck = await pool.query(
+      "SELECT id FROM pacientes WHERE id = $1 AND clinic_id = $2",
+      [paciente_id, DEFAULT_CLINIC_ID]
+    );
+
+    if (patientCheck.rowCount === 0) {
+      return res.status(404).json({ error: "Paciente não encontrado para esta clínica" });
+    }
+
     await pool.query(
-      "INSERT INTO agendamentos (paciente_id, data_agendamento, horario_agendamento, procedimento, valor, status) VALUES ($1, $2, $3, $4, $5, 'pending')",
-      [paciente_id, data, horario, procedimento, valor]
+      `
+      INSERT INTO agendamentos (
+        paciente_id, clinic_id, data_agendamento, horario_agendamento, procedimento, valor, status
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, 'pending')
+      `,
+      [paciente_id, DEFAULT_CLINIC_ID, data, horario, procedimento, valor]
     );
     res.sendStatus(201);
   } catch (err) {
@@ -362,14 +430,45 @@ app.post("/api/agendamentos", async (req, res) => {
   }
 });
 
+// ✅ NOVA ROTA: editar/remarcar agendamento
+app.put("/api/agendamentos/:id", async (req, res) => {
+  const { data, horario, procedimento, valor, status } = req.body;
+
+  try {
+    const result = await pool.query(
+      `
+      UPDATE agendamentos
+      SET
+        data_agendamento = $1,
+        horario_agendamento = $2,
+        procedimento = $3,
+        valor = $4,
+        status = $5
+      WHERE id = $6 AND clinic_id = $7
+      RETURNING id
+      `,
+      [data, horario, procedimento, valor, status, req.params.id, DEFAULT_CLINIC_ID]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: "Agendamento não encontrado" });
+    }
+
+    res.status(200).json({ id: result.rows[0].id });
+  } catch (err) {
+    console.error("Erro PUT /api/agendamentos/:id:", err);
+    res.status(500).json({ error: "Erro interno" });
+  }
+});
+
 app.put("/api/agendamentos/:id/status", async (req, res) => {
   const { status } = req.body;
 
   try {
-    await pool.query("UPDATE agendamentos SET status = $1 WHERE id = $2", [
-      status,
-      req.params.id,
-    ]);
+    await pool.query(
+      "UPDATE agendamentos SET status = $1 WHERE id = $2 AND clinic_id = $3",
+      [status, req.params.id, DEFAULT_CLINIC_ID]
+    );
     res.sendStatus(200);
   } catch (err) {
     console.error("Erro PUT /api/agendamentos/:id/status:", err);
@@ -379,7 +478,10 @@ app.put("/api/agendamentos/:id/status", async (req, res) => {
 
 app.delete("/api/agendamentos/:id", async (req, res) => {
   try {
-    await pool.query("DELETE FROM agendamentos WHERE id = $1", [req.params.id]);
+    await pool.query(
+      "DELETE FROM agendamentos WHERE id = $1 AND clinic_id = $2",
+      [req.params.id, DEFAULT_CLINIC_ID]
+    );
     res.sendStatus(200);
   } catch (err) {
     console.error("Erro DELETE /api/agendamentos/:id:", err);
@@ -389,9 +491,10 @@ app.delete("/api/agendamentos/:id", async (req, res) => {
 
 app.patch("/api/agendamentos/:id/confirmar", async (req, res) => {
   try {
-    await pool.query("UPDATE agendamentos SET status = 'confirmed' WHERE id = $1", [
-      req.params.id,
-    ]);
+    await pool.query(
+      "UPDATE agendamentos SET status = 'confirmed' WHERE id = $1 AND clinic_id = $2",
+      [req.params.id, DEFAULT_CLINIC_ID]
+    );
     res.sendStatus(200);
   } catch (err) {
     console.error("Erro PATCH /api/agendamentos/:id/confirmar:", err);
@@ -404,7 +507,10 @@ app.patch("/api/agendamentos/:id/confirmar", async (req, res) => {
 // ==========================================
 app.get("/api/financeiro", async (req, res) => {
   try {
-    const result = await pool.query("SELECT * FROM financeiro ORDER BY data_base DESC");
+    const result = await pool.query(
+      "SELECT * FROM financeiro WHERE clinic_id = $1 ORDER BY data_base DESC",
+      [DEFAULT_CLINIC_ID]
+    );
     res.json(result.rows);
   } catch (err) {
     console.error("Erro GET /api/financeiro:", err);
@@ -417,8 +523,11 @@ app.post("/api/financeiro", async (req, res) => {
 
   try {
     await pool.query(
-      "INSERT INTO financeiro (descricao, valor, tipo, categoria, data_base) VALUES ($1, $2, $3, $4, $5)",
-      [descricao, valor, tipo, categoria, data]
+      `
+      INSERT INTO financeiro (descricao, valor, tipo, categoria, data_base, clinic_id)
+      VALUES ($1, $2, $3, $4, $5, $6)
+      `,
+      [descricao, valor, tipo, categoria, data, DEFAULT_CLINIC_ID]
     );
     res.sendStatus(201);
   } catch (err) {
@@ -429,7 +538,10 @@ app.post("/api/financeiro", async (req, res) => {
 
 app.delete("/api/financeiro/:id", async (req, res) => {
   try {
-    await pool.query("DELETE FROM financeiro WHERE id = $1", [req.params.id]);
+    await pool.query(
+      "DELETE FROM financeiro WHERE id = $1 AND clinic_id = $2",
+      [req.params.id, DEFAULT_CLINIC_ID]
+    );
     res.sendStatus(200);
   } catch (err) {
     console.error("Erro DELETE /api/financeiro/:id:", err);
