@@ -103,7 +103,7 @@ app.post("/api/auth/google", async (req, res) => {
 
     if (user.rowCount === 0) {
       // Criar usuário automaticamente (opcional)
-      const clinicId = randomUUID(); // Gerar um clinic_id único para o usuário (ou usar um fixo se for monoclínica)
+      const clinicId = process.env.DEFAULT_CLINIC_ID; // Gerar um clinic_id único para o usuário (ou usar um fixo se for monoclínica)
       user = await pool.query(
         "INSERT INTO users (email, name, clinic_id, role) VALUES ($1, $2, $3,'admin') RETURNING id, clinic_id",
         [payload.email, payload.name || "Usuário Google", clinicId]
