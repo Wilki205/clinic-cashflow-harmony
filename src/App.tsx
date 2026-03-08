@@ -19,7 +19,7 @@ import { UserProvider } from "./contexts/UserContext"; // Importação corrigida
 
 const queryClient = new QueryClient();
 
-const GOOGLE_CLIENT_ID = "32708424254-68t52tk4ju1kos8nsqkdpmaaga4agcu3.apps.googleusercontent.com";
+const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID;
 
 const App = () => (
   <GoogleOAuthProvider clientId={GOOGLE_CLIENT_ID}>
