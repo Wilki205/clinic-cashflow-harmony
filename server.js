@@ -13,11 +13,6 @@ const __dirname = path.dirname(__filename);
 
 /** ====== Env ====== */
 dotenv.config({ path: path.join(__dirname, ".env.local") });
-const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
-const googleClient = new OAuth2Client(GOOGLE_CLIENT_ID);
-
-const { Pool } = pg;
-const app = express();
 
 /** ====== Helpers ====== */
 function requireEnv(name) {
@@ -34,13 +29,16 @@ const NODE_ENV = process.env.NODE_ENV || "development";
 const PORT = Number(process.env.PORT || 3000);
 const FRONT_ORIGIN = process.env.FRONT_ORIGIN;
 
-// ✅ Clínica fixa atual (monoclínica por enquanto)
-const DEFAULT_CLINIC_ID = "a7813766-8e38-4458-bd99-06af5cba2c46";
-const {randomUUID} = await import("crypto");
-
-/** ====== AUTH CONFIG (ADICIONADO) ====== */
+const GOOGLE_CLIENT_ID = requireEnv("GOOGLE_CLIENT_ID");
 const JWT_SECRET = requireEnv("JWT_SECRET");
 
+// ✅ Clínica fixa atual (monoclínica por enquanto)
+const DEFAULT_CLINIC_ID = "a7813766-8e38-4458-bd99-06af5cba2c46";
+
+const googleClient = new OAuth2Client(GOOGLE_CLIENT_ID);
+
+const { Pool } = pg;
+const app = express();
 
 /** ====== Middlewares ====== */
 if (NODE_ENV === "development") {
@@ -77,7 +75,7 @@ app.get("/api/health", async (req, res) => {
   }
 });
 
-/** ====== AUTH GOOGLE LOGIN (ADICIONADO) ====== */
+/** ====== AUTH GOOGLE LOGIN ====== */
 app.post("/api/auth/google", async (req, res) => {
   try {
     const { credential } = req.body;
@@ -96,28 +94,36 @@ app.post("/api/auth/google", async (req, res) => {
     if (!payload?.email) {
       return res.status(401).json({ error: "Token Google inválido" });
     }
-    // Verificar se o usuário existe na clínica (pode ser criado automaticamente ou ter um cadastro prévio)
-    let user = await pool.query(
-      "SELECT id, clinic_id FROM users WHERE email = $1",
+
+    let userResult = await pool.query(
+      "SELECT id, clinic_id FROM users WHERE email = $1 LIMIT 1",
       [payload.email]
     );
 
-    if (user.rowCount === 0) {
-      // Criar usuário automaticamente (opcional)
-      const clinicId = process.env.DEFAULT_CLINIC_ID; // Gerar um clinic_id único para o usuário (ou usar um fixo se for monoclínica)
-      user = await pool.query(
-        "INSERT INTO users (email, name, clinic_id, role) VALUES ($1, $2, $3,'admin') RETURNING id, clinic_id",
+    let user;
+
+    if (userResult.rowCount === 0) {
+      const clinicId = DEFAULT_CLINIC_ID;
+
+      userResult = await pool.query(
+        `
+        INSERT INTO users (email, name, clinic_id, role)
+        VALUES ($1, $2, $3, 'admin')
+        RETURNING id, clinic_id
+        `,
         [payload.email, payload.name || "Usuário Google", clinicId]
       );
-      user = user.rows[0];
+
+      user = userResult.rows[0];
     } else {
-      user = user.rows[0];
-    } 
+      user = userResult.rows[0];
+    }
+
     const token = jwt.sign(
       {
         email: payload.email,
         name: payload.name,
-        clinic_id: user.clinic_id
+        clinic_id: user.clinic_id,
       },
       JWT_SECRET,
       { expiresIn: "24h" }
@@ -129,15 +135,19 @@ app.post("/api/auth/google", async (req, res) => {
         email: payload.email,
         name: payload.name,
         picture: payload.picture,
+        clinic_id: user.clinic_id,
       },
     });
   } catch (err) {
     console.error("Erro login Google:", err);
-    res.status(401).json({ error: "Login inválido" });
+    res.status(401).json({
+      error: "Login inválido",
+      details: err?.message || "Falha na autenticação",
+    });
   }
 });
 
-/** ====== AUTH MIDDLEWARE (OPCIONAL, ADICIONADO) ====== */
+/** ====== AUTH MIDDLEWARE (opcional) ====== */
 function authMiddleware(req, res, next) {
   const authHeader = req.headers.authorization;
 
@@ -333,7 +343,6 @@ app.delete("/api/pacientes/:id", async (req, res) => {
 // ==========================================
 // 🩺 ROTA EXTRA: ANAMNESE (por paciente)
 // ==========================================
-
 function normalizeTriBool(v) {
   if (v === true || v === "true" || v === 1 || v === "1") return true;
   if (v === false || v === "false" || v === 0 || v === "0") return false;
@@ -387,7 +396,6 @@ app.put("/api/pacientes/:id/anamnese", async (req, res) => {
     medications = "",
     diseases = "",
     notes = "",
-
     hipertensao,
     diabetes,
     problemas_cardiacos,
@@ -518,7 +526,6 @@ app.post("/api/agendamentos", async (req, res) => {
   }
 });
 
-// ✅ editar/remarcar agendamento
 app.put("/api/agendamentos/:id", async (req, res) => {
   const { data, horario, procedimento, valor, status } = req.body;
 
