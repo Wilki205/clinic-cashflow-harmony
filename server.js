@@ -13,6 +13,8 @@ const __dirname = path.dirname(__filename);
 
 /** ====== Env ====== */
 dotenv.config({ path: path.join(__dirname, ".env.local") });
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
+const googleClient = new OAuth2Client(GOOGLE_CLIENT_ID);
 
 const { Pool } = pg;
 const app = express();
@@ -38,8 +40,7 @@ const {randomUUID} = await import("crypto");
 
 /** ====== AUTH CONFIG (ADICIONADO) ====== */
 const JWT_SECRET = requireEnv("JWT_SECRET");
-const GOOGLE_CLIENT_ID = requireEnv("GOOGLE_CLIENT_ID");
-const googleClient = new OAuth2Client(GOOGLE_CLIENT_ID);
+
 
 /** ====== Middlewares ====== */
 if (NODE_ENV === "development") {
