@@ -5,7 +5,7 @@ import pg from "pg";
 import path from "path";
 import { fileURLToPath } from "url";
 import jwt from "jsonwebtoken";
-import { OAuth2Client } from "google-auth-library";
+import bcrypt from "bcrypt";
 
 /** ====== Paths (ESM) ====== */
 const __filename = fileURLToPath(import.meta.url);
@@ -28,27 +28,21 @@ function requireEnv(name) {
 const NODE_ENV = process.env.NODE_ENV || "development";
 const PORT = Number(process.env.PORT || 3000);
 const FRONT_ORIGIN = process.env.FRONT_ORIGIN;
-
-const GOOGLE_CLIENT_ID = requireEnv("GOOGLE_CLIENT_ID");
 const JWT_SECRET = requireEnv("JWT_SECRET");
 
 // ✅ Clínica fixa atual (monoclínica por enquanto)
 const DEFAULT_CLINIC_ID = "a7813766-8e38-4458-bd99-06af5cba2c46";
 
-const googleClient = new OAuth2Client(GOOGLE_CLIENT_ID);
-
 const { Pool } = pg;
 const app = express();
 
 /** ====== Middlewares ====== */
-if (NODE_ENV === "development") {
-  app.use(
-    cors({
-      origin: FRONT_ORIGIN || true,
-      credentials: true,
-    })
-  );
-}
+app.use(
+  cors({
+    origin: FRONT_ORIGIN || true,
+    credentials: true,
+  })
+);
 
 app.use(express.json());
 
@@ -75,79 +69,135 @@ app.get("/api/health", async (req, res) => {
   }
 });
 
-/** ====== AUTH GOOGLE LOGIN ====== */
-app.post("/api/auth/google", async (req, res) => {
+/** ====== AUTH REGISTER ====== */
+app.post("/api/auth/register", async (req, res) => {
   try {
-    const { credential } = req.body;
+    const { name, email, password } = req.body;
 
-    if (!credential) {
-      return res.status(400).json({ error: "Credential ausente" });
+    if (!name || !email || !password) {
+      return res.status(400).json({
+        error: "Nome, email e senha são obrigatórios",
+      });
     }
 
-    const ticket = await googleClient.verifyIdToken({
-      idToken: credential,
-      audience: GOOGLE_CLIENT_ID,
-    });
-
-    const payload = ticket.getPayload();
-
-    if (!payload?.email) {
-      return res.status(401).json({ error: "Token Google inválido" });
-    }
-
-    let userResult = await pool.query(
-      "SELECT id, clinic_id FROM users WHERE email = $1 LIMIT 1",
-      [payload.email]
+    const existingUser = await pool.query(
+      "SELECT id FROM users WHERE email = $1 LIMIT 1",
+      [email]
     );
 
-    let user;
-
-    if (userResult.rowCount === 0) {
-      const clinicId = DEFAULT_CLINIC_ID;
-
-      userResult = await pool.query(
-        `
-        INSERT INTO users (email, name, clinic_id, role)
-        VALUES ($1, $2, $3, 'admin')
-        RETURNING id, clinic_id
-        `,
-        [payload.email, payload.name || "Usuário Google", clinicId]
-      );
-
-      user = userResult.rows[0];
-    } else {
-      user = userResult.rows[0];
+    if (existingUser.rowCount > 0) {
+      return res.status(409).json({
+        error: "Email já cadastrado",
+      });
     }
+
+    const password_hash = await bcrypt.hash(password, 10);
+
+    const result = await pool.query(
+      `
+      INSERT INTO users (email, name, password_hash, clinic_id, role)
+      VALUES ($1, $2, $3, $4, 'admin')
+      RETURNING id, email, name, clinic_id, role
+      `,
+      [email, name, password_hash, DEFAULT_CLINIC_ID]
+    );
+
+    const user = result.rows[0];
 
     const token = jwt.sign(
       {
-        email: payload.email,
-        name: payload.name,
+        id: user.id,
+        email: user.email,
+        name: user.name,
         clinic_id: user.clinic_id,
+        role: user.role,
       },
       JWT_SECRET,
       { expiresIn: "24h" }
     );
 
-    res.json({
+    return res.status(201).json({
       token,
-      user: {
-        email: payload.email,
-        name: payload.name,
-        picture: payload.picture,
-        clinic_id: user.clinic_id,
-      },
+      user,
     });
   } catch (err) {
-    console.error("Erro login Google:", err);
-    res.status(401).json({
-      error: "Login inválido",
-      details: err?.message || "Falha na autenticação",
+    console.error("Erro no cadastro:", err);
+    return res.status(500).json({
+      error: "Erro ao cadastrar usuário",
+      details: err?.message || "Erro interno",
     });
   }
 });
 
-/** ====== AUTH MIDDLEWARE (opcional) ====== */
+/** ====== AUTH LOGIN ====== */
+app.post("/api/auth/login", async (req, res) => {
+  try {
+    const { email, password } = req.body;
+
+    if (!email || !password) {
+      return res.status(400).json({
+        error: "Email e senha são obrigatórios",
+      });
+    }
+
+    const result = await pool.query(
+      `
+      SELECT id, email, name, password_hash, clinic_id, role
+      FROM users
+      WHERE email = $1
+      LIMIT 1
+      `,
+      [email]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(401).json({
+        error: "Email ou senha inválidos",
+      });
+    }
+
+    const user = result.rows[0];
+
+    const passwordMatch = await bcrypt.compare(password, user.password_hash || "");
+
+    if (!passwordMatch) {
+      return res.status(401).json({
+        error: "Email ou senha inválidos",
+      });
+    }
+
+    const token = jwt.sign(
+      {
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        clinic_id: user.clinic_id,
+        role: user.role,
+      },
+      JWT_SECRET,
+      { expiresIn: "24h" }
+    );
+
+    return res.json({
+      token,
+      user: {
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        clinic_id: user.clinic_id,
+        role: user.role,
+      },
+    });
+  } catch (err) {
+    console.error("Erro no login:", err);
+    return res.status(500).json({
+      error: "Erro ao fazer login",
+      details: err?.message || "Erro interno",
+    });
+  }
+});
+
+/** ====== AUTH MIDDLEWARE ====== */
 function authMiddleware(req, res, next) {
   const authHeader = req.headers.authorization;
 
@@ -169,7 +219,7 @@ function authMiddleware(req, res, next) {
 // ==========================================
 // 📊 ROTA 1: DASHBOARD (LEITURA)
 // ==========================================
-app.get("/api/dashboard-stats", async (req, res) => {
+app.get("/api/dashboard-stats", authMiddleware, async (req, res) => {
   try {
     const financeiroQuery = pool.query(
       `
@@ -233,7 +283,7 @@ app.get("/api/dashboard-stats", async (req, res) => {
   }
 });
 
-app.get("/api/agendamentos/hoje", async (req, res) => {
+app.get("/api/agendamentos/hoje", authMiddleware, async (req, res) => {
   try {
     const result = await pool.query(
       `
@@ -262,7 +312,7 @@ app.get("/api/agendamentos/hoje", async (req, res) => {
 // ==========================================
 // 👥 ROTA 2: PACIENTES (CRUD COMPLETO)
 // ==========================================
-app.get("/api/pacientes", async (req, res) => {
+app.get("/api/pacientes", authMiddleware, async (req, res) => {
   try {
     const result = await pool.query(
       "SELECT * FROM pacientes WHERE clinic_id = $1 ORDER BY nome ASC",
@@ -275,7 +325,7 @@ app.get("/api/pacientes", async (req, res) => {
   }
 });
 
-app.post("/api/pacientes", async (req, res) => {
+app.post("/api/pacientes", authMiddleware, async (req, res) => {
   const { name, email, phone, cpf, attachments } = req.body;
   const status = attachments?.length ? "ok" : "pendente";
 
@@ -298,7 +348,7 @@ app.post("/api/pacientes", async (req, res) => {
   }
 });
 
-app.put("/api/pacientes/:id", async (req, res) => {
+app.put("/api/pacientes/:id", authMiddleware, async (req, res) => {
   const { name, email, phone, cpf, attachments } = req.body;
   const status = attachments?.length ? "ok" : "pendente";
 
@@ -327,7 +377,7 @@ app.put("/api/pacientes/:id", async (req, res) => {
   }
 });
 
-app.delete("/api/pacientes/:id", async (req, res) => {
+app.delete("/api/pacientes/:id", authMiddleware, async (req, res) => {
   try {
     await pool.query(
       "DELETE FROM pacientes WHERE id = $1 AND clinic_id = $2",
@@ -349,7 +399,7 @@ function normalizeTriBool(v) {
   return null;
 }
 
-app.get("/api/pacientes/:id/anamnese", async (req, res) => {
+app.get("/api/pacientes/:id/anamnese", authMiddleware, async (req, res) => {
   try {
     const result = await pool.query(
       `
@@ -390,7 +440,7 @@ app.get("/api/pacientes/:id/anamnese", async (req, res) => {
   }
 });
 
-app.put("/api/pacientes/:id/anamnese", async (req, res) => {
+app.put("/api/pacientes/:id/anamnese", authMiddleware, async (req, res) => {
   const {
     allergies = "",
     medications = "",
@@ -478,7 +528,7 @@ app.put("/api/pacientes/:id/anamnese", async (req, res) => {
 // ==========================================
 // 📅 ROTA 3: AGENDA (CRUD)
 // ==========================================
-app.get("/api/agendamentos", async (req, res) => {
+app.get("/api/agendamentos", authMiddleware, async (req, res) => {
   try {
     const result = await pool.query(
       `
@@ -497,7 +547,7 @@ app.get("/api/agendamentos", async (req, res) => {
   }
 });
 
-app.post("/api/agendamentos", async (req, res) => {
+app.post("/api/agendamentos", authMiddleware, async (req, res) => {
   const { paciente_id, data, horario, procedimento, valor } = req.body;
 
   try {
@@ -526,7 +576,7 @@ app.post("/api/agendamentos", async (req, res) => {
   }
 });
 
-app.put("/api/agendamentos/:id", async (req, res) => {
+app.put("/api/agendamentos/:id", authMiddleware, async (req, res) => {
   const { data, horario, procedimento, valor, status } = req.body;
 
   try {
@@ -556,7 +606,7 @@ app.put("/api/agendamentos/:id", async (req, res) => {
   }
 });
 
-app.put("/api/agendamentos/:id/status", async (req, res) => {
+app.put("/api/agendamentos/:id/status", authMiddleware, async (req, res) => {
   const { status } = req.body;
 
   try {
@@ -571,7 +621,7 @@ app.put("/api/agendamentos/:id/status", async (req, res) => {
   }
 });
 
-app.delete("/api/agendamentos/:id", async (req, res) => {
+app.delete("/api/agendamentos/:id", authMiddleware, async (req, res) => {
   try {
     await pool.query(
       "DELETE FROM agendamentos WHERE id = $1 AND clinic_id = $2",
@@ -584,7 +634,7 @@ app.delete("/api/agendamentos/:id", async (req, res) => {
   }
 });
 
-app.patch("/api/agendamentos/:id/confirmar", async (req, res) => {
+app.patch("/api/agendamentos/:id/confirmar", authMiddleware, async (req, res) => {
   try {
     await pool.query(
       "UPDATE agendamentos SET status = 'confirmed' WHERE id = $1 AND clinic_id = $2",
@@ -600,7 +650,7 @@ app.patch("/api/agendamentos/:id/confirmar", async (req, res) => {
 // ==========================================
 // 💰 ROTA 4: FINANCEIRO (CRUD)
 // ==========================================
-app.get("/api/financeiro", async (req, res) => {
+app.get("/api/financeiro", authMiddleware, async (req, res) => {
   try {
     const result = await pool.query(
       "SELECT * FROM financeiro WHERE clinic_id = $1 ORDER BY data_base DESC",
@@ -613,7 +663,7 @@ app.get("/api/financeiro", async (req, res) => {
   }
 });
 
-app.post("/api/financeiro", async (req, res) => {
+app.post("/api/financeiro", authMiddleware, async (req, res) => {
   const { descricao, valor, tipo, categoria, data } = req.body;
 
   try {
@@ -631,7 +681,7 @@ app.post("/api/financeiro", async (req, res) => {
   }
 });
 
-app.delete("/api/financeiro/:id", async (req, res) => {
+app.delete("/api/financeiro/:id", authMiddleware, async (req, res) => {
   try {
     await pool.query(
       "DELETE FROM financeiro WHERE id = $1 AND clinic_id = $2",

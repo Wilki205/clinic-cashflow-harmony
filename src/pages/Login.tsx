@@ -1,39 +1,51 @@
-import { GoogleLogin } from "@react-oauth/google";
+import { useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Stethoscope } from "lucide-react";
 
 export default function Login() {
-  const onSuccess = async (response: any) => {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+
     try {
-      const res = await fetch(`${import.meta.env.VITE_API_URL}/api/auth/google`, {
+      setLoading(true);
+
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/api/auth/login`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          credential: response.credential,
+          email,
+          password,
         }),
       });
 
-      const data = await res.json();
+      let data: any = {};
+
+      try {
+        data = await res.json();
+      } catch {
+        data = {};
+      }
 
       if (!res.ok) {
-        throw new Error(data?.details || data?.error || "Falha na autenticação");
+        throw new Error(data?.error || data?.details || "Falha no login");
       }
 
       localStorage.setItem("@odonto:token", data.token);
       localStorage.setItem("@odonto:user", JSON.stringify(data.user));
 
-      window.location.href = "/";
+      window.location.replace("/");
     } catch (err: any) {
       console.error("Erro no login:", err);
       alert(err.message || "Erro ao fazer login.");
+    } finally {
+      setLoading(false);
     }
-  };
-
-  const onError = () => {
-    console.error("Erro na autenticação com o Google");
-    alert("Erro na autenticação com o Google.");
   };
 
   return (
@@ -55,17 +67,36 @@ export default function Login() {
           </CardDescription>
         </CardHeader>
 
-        <CardContent className="flex flex-col items-center gap-6 py-8">
-          <GoogleLogin
-            onSuccess={onSuccess}
-            onError={onError}
-            theme="filled_blue"
-            size="large"
-            text="signin_with"
-            shape="pill"
-          />
+        <CardContent className="py-8">
+          <form onSubmit={handleLogin} className="flex flex-col gap-4">
+            <input
+              type="email"
+              placeholder="Seu email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              className="w-full rounded-xl border border-slate-300 px-4 py-3 outline-none focus:border-blue-500"
+              required
+            />
 
-          <p className="text-[10px] text-slate-400 uppercase tracking-widest pt-2">
+            <input
+              type="password"
+              placeholder="Sua senha"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              className="w-full rounded-xl border border-slate-300 px-4 py-3 outline-none focus:border-blue-500"
+              required
+            />
+
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full rounded-xl bg-blue-600 py-3 font-semibold text-white transition hover:bg-blue-700 disabled:opacity-60"
+            >
+              {loading ? "Entrando..." : "Entrar"}
+            </button>
+          </form>
+
+          <p className="text-[10px] text-slate-400 uppercase tracking-widest pt-6 text-center">
             Sistema Restrito • Recife - PE
           </p>
         </CardContent>
